@@ -431,7 +431,7 @@ static int FS_FileLength( FILE *f, bool close )
 * 
 * Gives the searchpath element where this file exists, or NULL if it doesn't
 */
-static searchpath_t *FS_SearchPathForFile( const char *filename, packfile_t **pout, char *path, size_t path_size, void **vfsHandle, int mode )
+static searchpath_t *FS_SearchPathForFile__Original( const char *filename, packfile_t **pout, char *path, size_t path_size, void **vfsHandle, int mode )
 {
 	searchpath_t *search;
 	packfile_t *search_pak;
@@ -519,6 +519,32 @@ return_result:
 	QMutex_Unlock( fs_searchpaths_mutex );
 	return result;
 }
+
+
+bool startsWith( const char *pre, const char *str )
+{
+	return strncmp( pre, str, strlen( pre ) ) == 0;
+}
+
+static searchpath_t* FS_SearchPathForFile(const char* filename, packfile_t** pout, char* path, size_t path_size, void** vfsHandle, int mode) {
+	if( startsWith( "sounds/", filename ) ) {
+		searchpath_t *search;
+		QMutex_Lock( fs_searchpaths_mutex );
+		search = fs_searchpaths;
+		while( search ) {
+			if( (!search->pack) // is not a pack file
+				&& FS_SearchDirectoryForFile( search, filename, path, path_size, vfsHandle ) ) {
+				QMutex_Unlock( fs_searchpaths_mutex );
+				return search;
+			}
+			search = search->next;
+		}
+		QMutex_Unlock( fs_searchpaths_mutex );
+
+	}
+	return FS_SearchPathForFile__Original( filename, pout, path, path_size, vfsHandle, mode );
+}
+
 
 /*
 * FS_SearchPathForBaseFile
@@ -778,7 +804,7 @@ static void FS_CloseFileHandle( filehandle_t *fh )
 * If found returns the extension otherwise NULL
 * extensions parameter is string with extensions separated by spaces
 */
-const char *FS_FirstExtension( const char *filename, const char *extensions[], int num_extensions )
+const char *FS_FirstExtension__Original( const char *filename, const char *extensions[], int num_extensions )
 {
 	char **filenames;           // slots for testable filenames
 	size_t filename_size;       // size of one slot
@@ -890,6 +916,60 @@ return_result:
 	QMutex_Unlock( fs_searchpaths_mutex );
 
 	return result;
+}
+
+const char *FS_FirstExtension( const char *filename, const char *extensions[], int num_extensions )
+{
+	if( startsWith( "sounds/", filename ) ) {
+		char **filenames;	  // slots for testable filenames
+		size_t filename_size; // size of one slot
+		int i;
+		size_t max_extension_length;
+		searchpath_t *search;
+
+		assert( filename && extensions );
+
+		if( !num_extensions )
+			return NULL;
+
+		if( !COM_ValidateRelativeFilename( filename ) )
+			return NULL;
+
+		max_extension_length = 0;
+		for( i = 0; i < num_extensions; i++ ) {
+			if( strlen( extensions[i] ) > max_extension_length )
+				max_extension_length = strlen( extensions[i] );
+		}
+
+		// set the filenames to be tested
+		filenames = (char **)alloca( sizeof( char * ) * num_extensions );
+		filename_size = sizeof( char ) * ( strlen( filename ) + max_extension_length + 1 );
+
+		for( i = 0; i < num_extensions; i++ ) {
+			if( i )
+				filenames[i] = (char *)( (uint8_t *)filenames[0] + filename_size * i );
+			else
+				filenames[i] = (char *)alloca( filename_size * num_extensions );
+			Q_strncpyz( filenames[i], filename, filename_size );
+			COM_ReplaceExtension( filenames[i], extensions[i], filename_size );
+		}
+
+		QMutex_Lock( fs_searchpaths_mutex );
+		search = fs_searchpaths;
+		while( search ) {
+			for( i = 0; i < num_extensions; i++ ) {
+				void *vfsHandle = NULL; // search in VFS as well
+				if( (!search->pack)
+					&& FS_SearchDirectoryForFile( search, filenames[i], NULL, 0, &vfsHandle ) ) {
+					QMutex_Unlock( fs_searchpaths_mutex );
+					return extensions[i];
+				}
+			}
+			search = search->next;
+		}
+		QMutex_Unlock( fs_searchpaths_mutex );
+	}
+	return FS_FirstExtension__Original( filename, extensions, num_extensions );
 }
 
 /*
