@@ -134,18 +134,39 @@ namespace WarforkSoundmod
             }
 
             steamPath = Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath", "")?.ToString();
-            if (steamPath is null)
+            if (steamPath != null)
             {
-                AddLogLine("Could not find steam install path.");
+                wfExePath = Path.Combine(steamPath, @"steamapps\common\fvi\fvi-launcher\applications\warfork\Warfork.app\Contents\Resources\warfork_x64.exe");
+                if (!File.Exists(wfExePath))
+                {
+                    AddLogLine($"Could not find warfork_x64.exe at: {wfExePath}");
+                    wfExePath = null;
+                }
+            }
+
+            if (wfExePath != null)
+                return true;
+
+            AddLogLine("Could not find steam install of warfork_x64.exe. Querying warfork_x64.exe.");
+            var ofd = new OpenFileDialog()
+            {
+                FileName = "",
+                Filter = "Exe files (*.exe)|*.exe",
+                Title = "Select warfork_x64.exe"
+            };
+            if (ofd.ShowDialog() != DialogResult.OK)
+            {
+                AddLogLine("User cancelled query for warfork_x64.exe.");
                 return false;
             }
 
-            wfExePath = Path.Combine(steamPath, @"steamapps\common\fvi\fvi-launcher\applications\warfork\Warfork.app\Contents\Resources\warfork_x64.exe");
-            if (!File.Exists(wfExePath))
+            if (!File.Exists(ofd.FileName))
             {
-                AddLogLine($"Could not find warfork_x64.exe at: {wfExePath}");
+                AddLogLine("Selected file does not exist");
                 return false;
             }
+
+            wfExePath = ofd.FileName;
 
             return true;
         }
