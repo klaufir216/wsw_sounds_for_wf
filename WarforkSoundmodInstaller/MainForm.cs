@@ -12,11 +12,27 @@ using System.IO.Compression;
 using System.Threading;
 using System.Diagnostics;
 using Microsoft.Win32;
+using System.Security.Cryptography;
 
 namespace WarforkSoundmod
 {
     public partial class MainForm : Form
     {
+        const string EXPECTED_WF_MD5 = "3c685bcb3677a3075750030c6c13d42a";
+        const string PATCHED_MD5 = "a804c13705add85f29cd39146f6e6acd";
+        const string EXPECTED_EXENAME = "warfork_x64.exe";
+        static string CalculateMD5(string filename)
+        {
+            using (var md5 = MD5.Create())
+            {
+                using (var stream = File.OpenRead(filename))
+                {
+                    var hash = md5.ComputeHash(stream);
+                    return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+                }
+            }
+        }
+
         public MainForm()
         {
             InitializeComponent();
@@ -125,7 +141,7 @@ namespace WarforkSoundmod
         string wfExePath;
         Thread installThread;
 
-        bool prereqChecks()
+        bool prereqChecks(bool isInstall)
         {
             if (IsWarforkRunning())
             {
@@ -144,29 +160,52 @@ namespace WarforkSoundmod
                 }
             }
 
-            if (wfExePath != null)
-                return true;
+            if (wfExePath == null)
+            {
+                AddLogLine("Could not find steam install of warfork_x64.exe. Querying warfork_x64.exe.");
+                var ofd = new OpenFileDialog()
+                {
+                    FileName = "",
+                    Filter = "Exe files (*.exe)|*.exe",
+                    Title = "Select warfork_x64.exe"
+                };
+                if (ofd.ShowDialog() != DialogResult.OK)
+                {
+                    AddLogLine("User cancelled query for warfork_x64.exe.");
+                    return false;
+                }
 
-            AddLogLine("Could not find steam install of warfork_x64.exe. Querying warfork_x64.exe.");
-            var ofd = new OpenFileDialog()
-            {
-                FileName = "",
-                Filter = "Exe files (*.exe)|*.exe",
-                Title = "Select warfork_x64.exe"
-            };
-            if (ofd.ShowDialog() != DialogResult.OK)
-            {
-                AddLogLine("User cancelled query for warfork_x64.exe.");
-                return false;
+                if (!File.Exists(ofd.FileName))
+                {
+                    AddLogLine("Selected file does not exist");
+                    return false;
+                }
+
+                wfExePath = ofd.FileName;
             }
 
-            if (!File.Exists(ofd.FileName))
+            var wfExeName = Path.GetFileName(wfExePath);
+            if (wfExeName != EXPECTED_EXENAME)
             {
-                AddLogLine("Selected file does not exist");
-                return false;
+                AddLogLine($"Warning: selected exe is {wfExeName} instead of {EXPECTED_EXENAME}");
             }
 
-            wfExePath = ofd.FileName;
+            if (isInstall)
+            {
+                var calculatedWfExeMd5 = CalculateMD5(wfExePath);
+                if (EXPECTED_WF_MD5 != calculatedWfExeMd5
+                    && PATCHED_MD5 != calculatedWfExeMd5) // allow rewriting an install
+                {
+                    AddLogLine(
+                        $"Hash mismatch for {EXPECTED_EXENAME}: \r\n" + 
+                        $"  expected: {EXPECTED_WF_MD5}\r\n" + 
+                        $"       got: {calculatedWfExeMd5}");
+                    wfExePath = null;
+                    return false;
+                }
+            }
+
+
 
             return true;
         }
@@ -177,7 +216,7 @@ namespace WarforkSoundmod
             {
                 tbLogs.Clear();
 
-                if (!prereqChecks())
+                if (!prereqChecks(isInstall: true))
                     return;
 
                 installThread = new Thread(() => Install());
@@ -195,7 +234,7 @@ namespace WarforkSoundmod
             tbLogs.Clear();
             try
             {
-                if (!prereqChecks())
+                if (!prereqChecks(isInstall: false))
                     return;
 
                 var origBackupPath = $"{wfExePath}.original";
